@@ -4,7 +4,7 @@ AT-START-F403 + GMC306x example code
 Requirements
 -----------
 - AT-START-F403 development board
-- GMC306x: GMC306 or GMC306A magnetometer
+- Sensor Fusion Arduino Daughter Board V1.0: GMC306A is on the sensor board
 
 I2C Connections
 ---------------
@@ -13,10 +13,10 @@ I2C Connections
   - SDA: PB9
 - GMC306x I2C 7-bit slave address: 0x0C
 
-Configuration for GMC306A
-=========================
-Default sensor is GMC306. For GMC306A, uncomment the `USE_GMC306A` macro in the **gmc306x.h** for correct configuration.
+Configuration for GMC306
+========================
+Default sensor is GMC306A. For GMC306, comment out the `USE_GMC306A` macro in the **gmc306x.h** for correct configuration.
 ```
 /* Uncomment below macro for GMC306A */
-//#define USE_GMC306A
+#define USE_GMC306A
 ```

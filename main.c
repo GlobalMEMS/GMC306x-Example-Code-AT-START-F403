@@ -35,126 +35,19 @@
 /* Includes ------------------------------------------------------------------*/
 #include "i2c_gmems.h"
 #include "gmc306x.h"
+#include "Lcd_Driver.h"
+#include "GUI.h"
+#include "usart.h"
+#include "delay.h"
+#include "key.h"
+#include "string.h"
+#include "math.h"
 
 /* Private macro -------------------------------------------------------------*/
-
 /* global variables ---------------------------------------------------------*/
-
 /* Private variables ---------------------------------------------------------*/
-USART_InitType USART_InitStructure;
-static __IO uint32_t TimingDelay;
-
 /* Private function prototypes -----------------------------------------------*/
-
 /* Private functions ---------------------------------------------------------*/
-/**
- * @brief  Inserts a delay time.
- * @param  nTime: specifies the delay time length, in milliseconds.
- * @retval None
- */
-void Delay(__IO uint32_t nTime)
-{
-  TimingDelay = nTime;
-
-  while(TimingDelay != 0);
-}
-
-/**
- * @brief  Decrements the TimingDelay variable.
- * @param  None
- * @retval None
- */
-void TimingDelay_Decrement(void)
-{
-  if (TimingDelay != 0x00){
-    TimingDelay--;
-  }
-}
-
-/**
- * @brief  Retargets the C library printf function to the USART1.
- * @param
- * @retval
- */
-int fputc(int ch, FILE *f)
-{
-  while((USART1->STS & 0X40) == 0)
-    ;
-
-  USART1->DT = (u8)ch;
-  return ch;
-}
-
-/**
- * @brief  Configures the nested vectored interrupt controller.
- * @param  None
- * @retval None
- */
-void NVIC_Configuration(void)
-{
-  NVIC_InitType NVIC_InitStructure;
-
-  /* Enable the USARTx Interrupt */
-  NVIC_InitStructure.NVIC_IRQChannel = USART1_IRQn;
-  NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
-  NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0;
-  NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
-  NVIC_Init(&NVIC_InitStructure);
-}
-
-/**
- * @brief  Configures COM port.
- * @param  None
- * @retval None
- */
-void USART_COMInit()
-{
-
-  GPIO_InitType GPIO_InitStructure;
-
-  /* USARTx configured as follow:
-     - BaudRate = 115200 baud
-     - Word Length = 8 Bits
-     - One Stop Bit
-     - No parity check
-     - Hardware flow control disabled (RTS and CTS signals)
-     - Receive and transmit enabled
-  */
-  USART_InitStructure.USART_BaudRate = 115200;
-  USART_InitStructure.USART_WordLength = USART_WordLength_8b;
-  USART_InitStructure.USART_StopBits = USART_StopBits_1;
-  USART_InitStructure.USART_Parity = USART_Parity_No;
-  USART_InitStructure.USART_HardwareFlowControl = USART_HardwareFlowControl_None;
-  USART_InitStructure.USART_Mode = USART_Mode_Rx | USART_Mode_Tx;
-
-
-  /* Enable GPIO clock */
-  RCC_APB2PeriphClockCmd(RCC_APB2PERIPH_GPIOA, ENABLE);
-
-  /* Enable UART clock */
-  RCC_APB2PeriphClockCmd(RCC_APB2PERIPH_USART1, ENABLE);
-
-  /* Configure USART Tx as alternate function push-pull */
-  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
-  GPIO_InitStructure.GPIO_Pins = TX_PIN_NUMBER;
-  GPIO_InitStructure.GPIO_MaxSpeed = GPIO_MaxSpeed_50MHz;
-  GPIO_Init(TXRX_GPIOx, &GPIO_InitStructure);
-
-  /* Configure USART Rx as input floating */
-  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IN_FLOATING;
-  GPIO_InitStructure.GPIO_Pins = RX_PIN_NUMBER;
-  GPIO_Init(TXRX_GPIOx, &GPIO_InitStructure);
-
-  /* USART configuration */
-  USART_Init(USART1, &USART_InitStructure);
-
-  /* Enable USART */
-  USART_Cmd(USART1, ENABLE);
-
-  /* Enable the EVAL_COM1 Receive interrupt: this interrupt is generated when the
-     EVAL_COM1 receive data register is not empty */
-  USART_INTConfig(USART1, USART_INT_RDNE, ENABLE);
-}
 
 #ifdef  USE_FULL_ASSERT
 
@@ -177,6 +70,61 @@ void assert_failed(uint8_t* file, uint32_t line)
 
 #endif
 
+const u16 RESOLUTION_X = 128;
+const u16 RESOLUTION_Y = 120;
+const u16 FONT_HEIGHT = 16;
+const u16 LINE_HEIGHT = FONT_HEIGHT + 2;
+const u16 MAX_DISPLAY_ITEM = 9;
+void showMsg(u16 x, u16 line, u8* str, u16 color, u8 reDraw){
+
+  int i;
+  char* subStr;
+
+  if(reDraw) Lcd_Clear(GRAY0);
+
+  subStr = strtok((char*)str, "\n");
+
+  for(i = line; subStr; ++i){
+    Gui_DrawFont_GBK16(x, LINE_HEIGHT * i, color, GRAY0, (u8*)subStr);
+    subStr = strtok(NULL, "\n");
+  }
+}
+
+void floatCatToStr(float fIn, u8 precision, u8* outStr){
+
+  s32 i = 0;
+  float fTmp;
+  s32 s32Dec, s32Dig;
+
+  if(fIn < 0){
+    fIn = -fIn;
+    strcat((char*)outStr, "-");
+  }
+
+  s32Dec = (s32)fIn;
+  fTmp = fIn - s32Dec;
+  for(i = 0; i < precision; ++i)
+    fTmp *= 10;
+  s32Dig = (s32)(fTmp + 0.5f);
+
+  itoa(s32Dec, &outStr[strlen((const char*)outStr)]);
+  strcat((char*)outStr, ".");
+
+  fTmp = 1;
+  for(i = 0; i < precision; ++i)
+    fTmp *= 10;
+  for(i = 0; i < precision; ++i){
+    fTmp /= 10;
+    if(s32Dig < fTmp){
+      strcat((char*)outStr, "0");
+    }
+    else{
+      itoa(s32Dig, &outStr[strlen((const char*)outStr)]);
+      break;
+    }
+  }
+}
+
 /**
  * @brief   Main program
  * @param  None
@@ -184,28 +132,27 @@ void assert_failed(uint8_t* file, uint32_t line)
  */
 int main(void)
 {
-  RCC_ClockType RccClkSource;
   bus_support_t gmc306_bus;
   raw_data_xyzt_t rawData;
   float_xyzt_t calibData;  //m-sensor data in code
   float_xyzt_t mData;      //m-sensor data in uT
   float_xyzt_t adjustVal = { 1.0, 1.0, 1.0, 0.0 };
   s32 i;
+  u8 str[64];
 
-  /* NVIC configuration */
-  NVIC_Configuration();
-
-  /* USART COM configuration */
-  USART_COMInit();
+  /* System Initialization */
+  SystemInit();
 
   /* I2C1 initialization */
   I2C1_Init();
 
-  RCC_GetClocksFreq(&RccClkSource);
-  if (SysTick_Config(RccClkSource.AHBCLK_Freq / 1000)){
-    /* Capture error */
-    while(1);
-  }
+  /* Init Key */
+  KEY_Init();
+
+  /* Initialize the LCD */
+  uart_init(19200);
+  delay_init();
+  Lcd_Init();
 
   /* GMC306 I2C bus setup */
   bus_init_I2C1(&gmc306_bus, GMC306_8BIT_I2C_ADDR);  //Initialize bus support to I2C1
@@ -215,15 +162,45 @@ int main(void)
   gmc306_soft_reset();
 
   /* Wait 10ms for reset complete */
-  Delay(10);
+  delay_ms(10);
 
   /* GMC306 get the sensitivity adjust values */
   gmc306_get_sensitivity_adjust_val(&adjustVal);
 
-  printf("Sadj=%.4f, %.4f, %.4f\n", adjustVal.u.x, adjustVal.u.y, adjustVal.u.z);
+  /* User message: show sensitivity adjustment value */
+  strcpy((char*)str, "X_Sadj= ");
+  floatCatToStr(adjustVal.u.x, 4, str);
+  strcat((char*)str, "\nY_Sadj= ");
+  floatCatToStr(adjustVal.u.y, 4, str);
+  strcat((char*)str, "\nZ_Sadj= ");
+  floatCatToStr(adjustVal.u.z, 4, str);
+  showMsg(0, 0, str, BLACK, 1);
+  strcpy((char*)str, "Press Key1 to\ncontinue");
+  showMsg(0, 4, str, RED, 0);
+
+  do{
+    delay_ms(10);
+  }while(KEY_Scan() != KEY1_PRES);
 
   //Set to CM 10Hz
   gmc306_set_operation_mode(GMC306_OP_MODE_CM_10HZ);
+
+  strcpy((char*)str, "XYZ (code):");
+  showMsg(0, 0, str, BLACK, 1);
+  strcpy((char*)str, "X=");
+  showMsg(0, 1, str, GRAY1, 0);
+  strcpy((char*)str, "Y=");
+  showMsg(0, 2, str, GRAY1, 0);
+  strcpy((char*)str, "Z=");
+  showMsg(0, 3, str, GRAY1, 0);
+  strcpy((char*)str, "XYZ (uT):");
+  showMsg(0, 5, str, BLACK, 0);
+  strcpy((char*)str, "X=");
+  showMsg(0, 6, str, GRAY1, 0);
+  strcpy((char*)str, "Y=");
+  showMsg(0, 7, str, GRAY1, 0);
+  strcpy((char*)str, "Z=");
+  showMsg(0, 8, str, GRAY1, 0);
 
   while (1){
 
@@ -238,11 +215,36 @@ int main(void)
     for(i = 0; i < 3; ++i)
       mData.v[i] = calibData.v[i] / GMC306_RAW_DATA_SENSITIVITY;
 
-    printf("XYZ(code)=%.2f, %.2f, %.2f\r", calibData.u.x, calibData.u.y, calibData.u.z);
-    printf("XYZ(uT)=%.2f, %.2f, %.2f\n", mData.u.x, mData.u.y, mData.u.z);
+    /* User message: XYZ in code*/
+    strcpy((char*)str, "");
+    floatCatToStr(calibData.u.x, 1, str);
+    strcat((char*)str, "       ");
+    showMsg(30, 1, str, BLUE, 0);
+    strcpy((char*)str, "");
+    floatCatToStr(calibData.u.y, 1, str);
+    strcat((char*)str, "       ");
+    showMsg(30, 2, str, BLUE, 0);
+    strcpy((char*)str, "");
+    floatCatToStr(calibData.u.z, 1, str);
+    strcat((char*)str, "       ");
+    showMsg(30, 3, str, BLUE, 0);
+
+    /* User message: XYZ in uT*/
+    strcpy((char*)str, "");
+    floatCatToStr(mData.u.x, 1, str);
+    strcat((char*)str, "       ");
+    showMsg(30, 6, str, BLUE, 0);
+    strcpy((char*)str, "");
+    floatCatToStr(mData.u.y, 1, str);
+    strcat((char*)str, "       ");
+    showMsg(30, 7, str, BLUE, 0);
+    strcpy((char*)str, "");
+    floatCatToStr(mData.u.z, 1, str);
+    strcat((char*)str, "       ");
+    showMsg(30, 8, str, BLUE, 0);
 
     /* Delay 1 sec */
-    Delay(1000);
+    delay_ms(1000);
   }
 }
 
